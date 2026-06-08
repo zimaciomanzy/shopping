@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>만지's 장보기</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700&display=swap" rel="stylesheet" />
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Noto Sans KR', sans-serif; background: #FAFAF7; }
+    input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <!-- Firebase -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+    import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+    import { createElement as h, useState, useEffect, useRef } from "https://esm.sh/react@18";
+    import { createRoot } from "https://esm.sh/react-dom@18/client";
+
+    // Firebase 초기화
+    const firebaseConfig = {
+      apiKey: "AIzaSyCgaSjNjKpfEAr3IEC9PGOdbwRgWOlV9NQ",
+      authDomain: "manzys-basket.firebaseapp.com",
+      projectId: "manzys-basket",
+      storageBucket: "manzys-basket.firebasestorage.app",
+      messagingSenderId: "367697358870",
+      appId: "1:367697358870:web:adff1f1a7d5485125d8537"
+    };
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+    const DOC_REF = doc(db, "shop", "shared");
+
+    const DEFAULT_CATEGORIES = [
+      { id: "produce", name: "🥬 채소/과일", items: [
+        { id: 1, name: "양파", unit: "개", price: 0 },
+        { id: 2, name: "마늘", unit: "통", price: 0 },
+        { id: 3, name: "대파", unit: "단", price: 0 },
+        { id: 4, name: "당근", unit: "개", price: 0 },
+        { id: 5, name: "감자", unit: "kg", price: 0 },
+      ]},
+      { id: "protein", name: "🥩 육류/해산물", items: [
+        { id: 7, name: "돼지고기", unit: "kg", price: 0 },
+        { id: 8, name: "닭고기", unit: "kg", price: 0 },
+        { id: 10, name: "계란", unit: "판", price: 0 },
+      ]},
+      { id: "dairy", name: "🧀 유제품", items: [
+        { id: 12, name: "우유", unit: "L", price: 0 },
+        { id: 13, name: "버터", unit: "개", price: 0 },
+        { id: 15, name: "생크림", unit: "ml", price: 0 },
+      ]},
+      { id: "dry", name: "🌾 건식/소스", items: [
+        { id: 16, name: "밀가루", unit: "kg", price: 0 },
+        { id: 17, name: "설탕", unit: "kg", price: 0 },
+        { id: 19, name: "식용유", unit: "L", price: 0 },
+        { id: 20, name: "간장", unit: "L", price: 0 },
+      ]},
+      { id: "beverage", name: "☕ 음료", items: [
+        { id: 22, name: "원두", unit: "kg", price: 0 },
+        { id: 23, name: "녹차", unit: "박스", price: 0 },
+      ]},
+    ];
+
+    const UNIT_PRESETS = ["개","봉","팩","캔","병","박스","단","통","장","kg","g","L","ml"];
+    const fmt = (n) => n.toLocaleString("ko-KR") + "원";
+    const font = "'Noto Sans KR', sans-serif";
+
+    const s = (style) => style;
+
+    function App() {
+      const [categories, setCategories] = useState(DEFAULT_CATEGORIES);
+      const [quantities, setQuantities] = useState({});
+      const [view, setView] = useState("check");
+      const [editMode, setEditMode] = useState(false);
+      const [editingUnitId, setEditingUnitId] = useState(null);
+      const [editingPriceId, setEditingPriceId] = useState(null);
+      const [confirmDeleteCatId, setConfirmDeleteCatId] = useState(null);
+      const [showAddItem, setShowAddItem] = useState(false);
+      const [newItemName, setNewItemName] = useState("");
+      const [newItemUnit, setNewItemUnit] = useState("개");
+      const [newItemPrice, setNewItemPrice] = useState("");
+      const [newItemCat, setNewItemCat] = useState("produce");
+      const [showAddCat, setShowAddCat] = useState(false);
+      const [newCatName, setNewCatName] = useState("");
+      const [syncing, setSyncing] = useState(false);
+      const [lastSync, setLastSync] = useState(null);
+      const [syncError, setSyncError] = useState(false);
+      const isSaving = useRef(false);
+      const isRemote = useRef(false);
+
+      // 실시간 수신 (Firebase onSnapshot)
+      useEffect(() => {
+        const unsub = onSnapshot(DOC_REF, (snap) => {
+          if (!snap.exists()) return;
+          const data = snap.data();
+          isRemote.current = true;
+          setCategories(data.categories || DEFAULT_CATEGORIES);
+          setQuantities(data.quantities || {});
+          setLastSync(new Date());
+          setSyncError(false);
+        }, () => setSyncError(true));
+        return () => unsub();
+      }, []);
+
+      // 저장
+      const save = async (cats, qtys) => {
+        if (isSaving.current) return;
+        isSaving.current = true;
+        setSyncing(true);
+        try {
+          await setDoc(DOC_REF, { categories: cats, quantities: qtys, updatedAt: Date.now() });
+          setLastSync(new Date());
+          setSyncError(false);
+        } catch (e) {
+          setSyncError(true);
+        } finally {
+          setSyncing(false);
+          isSaving.current = false;
+        }
+      };
+
+      const updateCats = (cats) => { setCategories(cats); save(cats, quantities); };
+      const updateQtys = (qtys) => { setQuantities(qtys); save(categories, qtys); };
+
+      const allItems = categories.flatMap((c) => c.items.map((i) => ({ ...i, catName: c.name })));
+      const shoppingList = allItems.filter((i) => (quantities[i.id] || 0) > 0).map((i) => ({ ...i, qty: quantities[i.id] }));
+      const totalItems = shoppingList.length;
+      const doneItems = shoppingList.filter((i) => quantities[`done_${i.id}`]).length;
+      const totalCost = shoppingList.reduce((s, i) => s + (i.price || 0) * i.qty, 0);
+      const doneCost = shoppingList.filter((i) => quantities[`done_${i.id}`]).reduce((s, i) => s + (i.price || 0) * i.qty, 0);
+      const hasPrices = shoppingList.some((i) => i.price > 0);
+
+      const setQty = (id, val) => updateQtys({ ...quantities, [id]: Math.max(0, parseInt(val) || 0) });
+      const inc = (id) => updateQtys({ ...quantities, [id]: (quantities[id] || 0) + 1 });
+      const dec = (id) => updateQtys({ ...quantities, [id]: Math.max(0, (quantities[id] || 0) - 1) });
+      const toggleDone = (id) => updateQtys({ ...quantities, [`done_${id}`]: !quantities[`done_${id}`] });
+      const resetAll = () => updateQtys({});
+
+      const updateItem = (catId, itemId, patch) =>
+        updateCats(categories.map((c) => c.id === catId ? { ...c, items: c.items.map((i) => i.id === itemId ? { ...i, ...patch } : i) } : c));
+
+      const deleteItem = (catId, itemId) => {
+        const newCats = categories.map((c) => c.id === catId ? { ...c, items: c.items.filter((i) => i.id !== itemId) } : c);
+        const newQtys = { ...quantities };
+        delete newQtys[itemId]; delete newQtys[`done_${itemId}`];
+        setCategories(newCats); setQuantities(newQtys);
+        save(newCats, newQtys);
+      };
+
+      const addItem = () => {
+        if (!newItemName.trim()) return;
+        const id = Date.now();
+        const newCats = categories.map((c) => c.id === newItemCat
+          ? { ...c, items: [...c.items, { id, name: newItemName.trim(), unit: newItemUnit, price: parseInt(newItemPrice) || 0 }] } : c);
+        updateCats(newCats);
+        setNewItemName(""); setNewItemPrice(""); setShowAddItem(false);
+      };
+
+      const deleteCategory = (catId) => {
+        const cat = categories.find((c) => c.id === catId);
+        const newCats = categories.filter((c) => c.id !== catId);
+        const newQtys = { ...quantities };
+        if (cat) cat.items.forEach((i) => { delete newQtys[i.id]; delete newQtys[`done_${i.id}`]; });
+        setCategories(newCats); setQuantities(newQtys);
+        save(newCats, newQtys);
+        setConfirmDeleteCatId(null);
+      };
+
+      const moveCategory = (catId, dir) => {
+        const idx = categories.findIndex((c) => c.id === catId);
+        const next = [...categories];
+        const to = idx + dir;
+        if (to < 0 || to >= next.length) return;
+        [next[idx], next[to]] = [next[to], next[idx]];
+        updateCats(next);
+      };
+
+      const addCategory = () => {
+        if (!newCatName.trim()) return;
+        updateCats([...categories, { id: `cat_${Date.now()}`, name: newCatName.trim(), items: [] }]);
+        setNewCatName(""); setShowAddCat(false);
+      };
+
+      const syncLabel = syncing ? "저장 중…" : syncError ? "연결 오류" : lastSync
+        ? `${lastSync.getHours()}:${String(lastSync.getMinutes()).padStart(2,"0")} 동기화됨` : "연결 중…";
+      const syncColor = syncError ? "#ff6b6b" : syncing ? "#f0c040" : lastSync ? "#A8E063" : "#888";
+
+      const darkBtn = { background: "#1C1C1E", color: "#A8E063", fontWeight: 700, borderRadius: 12, padding: "13px 0", fontSize: 15, border: "none", cursor: "pointer", fontFamily: font };
+      const ghostBtn = { border: "1px solid #ddd", background: "none", color: "#555", borderRadius: 12, padding: "13px 0", fontSize: 14, cursor: "pointer", fontFamily: font };
+
+      return h("div", { style: { minHeight: "100vh", background: "#FAFAF7", fontFamily: font } },
+
+        // Header
+        h("div", { style: { background: "#1C1C1E", color: "#fff", padding: "20px 20px 0", position: "sticky", top: 0, zIndex: 100 } },
+          h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 } },
+            h("div", null,
+              h("div", { style: { fontSize: 10, color: "#555", letterSpacing: 2 } }, "만지's BASKET"),
+              h("div", { style: { fontSize: 22, fontWeight: 700 } }, "장보기 목록")
+            ),
+            h("div", { style: { display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 } },
+              h("div", { style: { fontSize: 11, color: syncColor, display: "flex", alignItems: "center", gap: 4 } },
+                h("span", { style: { width: 6, height: 6, borderRadius: "50%", background: syncColor, display: "inline-block" } }),
+                syncLabel
+              ),
+              view === "check" && h("button", {
+                onClick: () => { setEditMode((v) => !v); setEditingUnitId(null); setEditingPriceId(null); setConfirmDeleteCatId(null); },
+                style: { background: editMode ? "#A8E063" : "#2C2C2E", border: "none", borderRadius: 20, padding: "6px 16px", fontSize: 13, color: editMode ? "#1a1a1a" : "#aaa", fontWeight: 600, cursor: "pointer", fontFamily: font }
+              }, editMode ? "완료" : "편집"),
+              view === "list" && totalItems > 0 && h("div", { style: { background: "#2C2C2E", borderRadius: 20, padding: "6px 14px", fontSize: 13, color: "#A8E063" } }, `${doneItems}/${totalItems} 완료`)
+            )
+          ),
+          h("div", { style: { display: "flex" } },
+            [["check","📋 재고 확인"], ["list", `🛒 장보기${totalItems > 0 ? ` (${totalItems})` : ""}`]].map(([key, label]) =>
+              h("button", { key, onClick: () => setView(key), style: { flex: 1, padding: "12px 0", border: "none", background: "none", color: view === key ? "#A8E063" : "#555", fontWeight: view === key ? 700 : 400, fontSize: 14, borderBottom: view === key ? "2px solid #A8E063" : "2px solid transparent", cursor: "pointer", fontFamily: font } }, label)
+            )
+          )
+        ),
+
+        // 재고 확인
+        view === "check" && h("div", { style: { padding: "16px 16px 140px" } },
+          ...categories.map((cat, catIdx) =>
+            h("div", { key: cat.id, style: { marginBottom: 24 } },
+              h("div", { style: { fontSize: 13, fontWeight: 700, color: "#555", padding: "8px 4px", borderBottom: "1px solid #E8E8E4", marginBottom: 8, display: "flex", justifyContent: "space-between", alignItems: "center" } },
+                h("span", null, cat.name),
+                editMode && h("div", { style: { display: "flex", gap: 6, alignItems: "center" } },
+                  h("button", { onClick: () => moveCategory(cat.id, -1), disabled: catIdx === 0, style: { width: 28, height: 28, borderRadius: 6, border: "1px solid #ddd", background: catIdx === 0 ? "#f5f5f5" : "#fff", color: catIdx === 0 ? "#ccc" : "#555", fontSize: 13, cursor: catIdx === 0 ? "default" : "pointer" } }, "▲"),
+                  h("button", { onClick: () => moveCategory(cat.id, 1), disabled: catIdx === categories.length - 1, style: { width: 28, height: 28, borderRadius: 6, border: "1px solid #ddd", background: catIdx === categories.length - 1 ? "#f5f5f5" : "#fff", color: catIdx === categories.length - 1 ? "#ccc" : "#555", fontSize: 13, cursor: catIdx === categories.length - 1 ? "default" : "pointer" } }, "▼"),
+                  h("button", { onClick: () => setConfirmDeleteCatId(confirmDeleteCatId === cat.id ? null : cat.id), style: { background: confirmDeleteCatId === cat.id ? "#555" : "#ff3b30", border: "none", borderRadius: 6, color: "#fff", fontSize: 11, fontWeight: 700, padding: "0 8px", height: 28, cursor: "pointer" } }, confirmDeleteCatId === cat.id ? "취소" : "삭제"),
+                  confirmDeleteCatId === cat.id && h("button", { onClick: () => deleteCategory(cat.id), style: { background: "#ff3b30", border: "none", borderRadius: 6, color: "#fff", fontSize: 11, fontWeight: 700, padding: "0 8px", height: 28, cursor: "pointer" } }, "확인")
+                )
+              ),
+              h("div", { style: { display: "grid", gap: 8 } },
+                ...cat.items.map((item) => {
+                  const qty = quantities[item.id] || 0;
+                  const sel = qty > 0;
+                  return h("div", { key: item.id, style: { background: editMode ? "#fff" : sel ? "#1C1C1E" : "#fff", border: `1px solid ${editMode ? "#E8E8E4" : sel ? "#1C1C1E" : "#E8E8E4"}`, borderRadius: 12, padding: "12px 14px", transition: "all 0.2s" } },
+                    editMode ? h("div", null,
+                      h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center" } },
+                        h("div", { style: { fontWeight: 500, fontSize: 15 } },
+                          item.name,
+                          h("span", { onClick: () => setEditingUnitId(editingUnitId === item.id ? null : item.id), style: { fontSize: 11, marginLeft: 6, color: "#fff", background: "#777", padding: "2px 7px", borderRadius: 10, cursor: "pointer" } }, `${item.unit} ✎`),
+                          h("span", { onClick: () => setEditingPriceId(editingPriceId === item.id ? null : item.id), style: { fontSize: 11, marginLeft: 4, color: "#fff", background: item.price > 0 ? "#2a7a2a" : "#aaa", padding: "2px 7px", borderRadius: 10, cursor: "pointer" } }, item.price > 0 ? fmt(item.price) : "단가 ✎")
+                        ),
+                        h("button", { onClick: () => deleteItem(cat.id, item.id), style: { background: "#ff3b30", border: "none", borderRadius: 8, color: "#fff", fontSize: 20, width: 32, height: 32, cursor: "pointer" } }, "−")
+                      ),
+                      editingUnitId === item.id && h("div", { style: { marginTop: 10, padding: 10, background: "#F5F5F2", borderRadius: 10 } },
+                        h("div", { style: { fontSize: 11, color: "#888", marginBottom: 6, fontWeight: 600 } }, "단위 선택"),
+                        h("div", { style: { display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 8 } },
+                          ...UNIT_PRESETS.map((u) => h("button", { key: u, onClick: () => { updateItem(cat.id, item.id, { unit: u }); setEditingUnitId(null); }, style: { padding: "5px 11px", borderRadius: 20, border: `1.5px solid ${item.unit === u ? "#1C1C1E" : "#ddd"}`, background: item.unit === u ? "#1C1C1E" : "#fff", color: item.unit === u ? "#A8E063" : "#555", fontSize: 12, cursor: "pointer" } }, u))
+                        ),
+                        h("div", { style: { display: "flex", gap: 6 } },
+                          h("input", { placeholder: "직접 입력", defaultValue: UNIT_PRESETS.includes(item.unit) ? "" : item.unit, onKeyDown: (e) => { if (e.key === "Enter" && e.target.value.trim()) { updateItem(cat.id, item.id, { unit: e.target.value.trim() }); setEditingUnitId(null); } }, style: { flex: 1, padding: "7px 10px", borderRadius: 8, border: "1px solid #ddd", fontFamily: font, fontSize: 13, outline: "none" } }),
+                          h("button", { onClick: (e) => { const v = e.target.previousSibling.value.trim(); if (v) { updateItem(cat.id, item.id, { unit: v }); setEditingUnitId(null); } }, style: { padding: "7px 12px", borderRadius: 8, background: "#1C1C1E", color: "#A8E063", fontWeight: 700, fontSize: 13, border: "none", cursor: "pointer" } }, "확인")
+                        )
+                      ),
+                      editingPriceId === item.id && h("div", { style: { marginTop: 10, padding: 10, background: "#F0FFF0", borderRadius: 10 } },
+                        h("div", { style: { fontSize: 11, color: "#555", marginBottom: 6, fontWeight: 600 } }, `${item.unit}당 가격 (원)`),
+                        h("div", { style: { display: "flex", gap: 6 } },
+                          h("input", { type: "number", placeholder: "예: 3000", defaultValue: item.price > 0 ? item.price : "", onKeyDown: (e) => { if (e.key === "Enter") { updateItem(cat.id, item.id, { price: parseInt(e.target.value) || 0 }); setEditingPriceId(null); } }, style: { flex: 1, padding: "9px 10px", borderRadius: 8, border: "1px solid #b6e2b6", fontFamily: font, fontSize: 15, outline: "none", fontWeight: 700 } }),
+                          h("button", { onClick: (e) => { updateItem(cat.id, item.id, { price: parseInt(e.target.previousSibling.value) || 0 }); setEditingPriceId(null); }, style: { padding: "7px 14px", borderRadius: 8, background: "#2a7a2a", color: "#fff", fontWeight: 700, fontSize: 13, border: "none", cursor: "pointer" } }, "저장")
+                        ),
+                        item.price > 0 && h("button", { onClick: () => { updateItem(cat.id, item.id, { price: 0 }); setEditingPriceId(null); }, style: { marginTop: 6, background: "none", border: "none", color: "#aaa", fontSize: 12, cursor: "pointer" } }, "단가 삭제")
+                      )
+                    ) : h("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between" } },
+                      h("div", null,
+                        h("div", { style: { fontWeight: 500, fontSize: 15, color: sel ? "#fff" : "#1a1a1a" } }, item.name, h("span", { style: { fontSize: 12, color: sel ? "#888" : "#ccc", marginLeft: 6 } }, `(${item.unit})`)),
+                        item.price > 0 && h("div", { style: { fontSize: 11, color: sel ? "#A8E063" : "#aaa", marginTop: 2 } }, fmt(item.price) + "/" + item.unit, qty > 0 && h("span", { style: { fontWeight: 700, marginLeft: 4 } }, `→ ${fmt(item.price * qty)}`))
+                      ),
+                      h("div", { style: { display: "flex", alignItems: "center", gap: 8 } },
+                        h("button", { onClick: () => dec(item.id), style: { width: 32, height: 32, borderRadius: 8, border: "none", background: sel ? "#333" : "#F0F0EC", color: sel ? "#fff" : "#555", fontSize: 20, cursor: "pointer" } }, "−"),
+                        h("input", { type: "number", min: 0, value: qty === 0 ? "" : qty, placeholder: "0", onChange: (e) => setQty(item.id, e.target.value), style: { width: 44, height: 32, textAlign: "center", border: "none", borderRadius: 8, background: sel ? "#333" : "#F0F0EC", color: sel ? "#A8E063" : "#1a1a1a", fontSize: 16, fontWeight: 700, fontFamily: font, outline: "none" } }),
+                        h("button", { onClick: () => inc(item.id), style: { width: 32, height: 32, borderRadius: 8, border: "none", background: sel ? "#A8E063" : "#F0F0EC", color: sel ? "#1a1a1a" : "#555", fontSize: 20, cursor: "pointer" } }, "+")
+                      )
+                    )
+                  );
+                })
+              )
+            )
+          ),
+          h("div", { style: { marginTop: 4 } },
+            !showAddItem && !showAddCat && h("div", { style: { display: "flex", gap: 8 } },
+              h("button", { onClick: () => setShowAddItem(true), style: { flex: 1, padding: 12, borderRadius: 12, border: "1.5px dashed #ccc", background: "none", color: "#888", fontSize: 14, cursor: "pointer", fontFamily: font } }, "+ 품목 추가"),
+              h("button", { onClick: () => setShowAddCat(true), style: { flex: 1, padding: 12, borderRadius: 12, border: "1.5px dashed #ccc", background: "none", color: "#888", fontSize: 14, cursor: "pointer", fontFamily: font } }, "+ 카테고리")
+            ),
+            showAddItem && h("div", { style: { background: "#fff", border: "1px solid #E8E8E4", borderRadius: 14, padding: 16 } },
+              h("div", { style: { fontWeight: 700, marginBottom: 12 } }, "새 품목 추가"),
+              h("select", { value: newItemCat, onChange: (e) => setNewItemCat(e.target.value), style: { width: "100%", padding: 10, borderRadius: 8, border: "1px solid #ddd", marginBottom: 8, fontFamily: font, fontSize: 14 } },
+                ...categories.map((c) => h("option", { key: c.id, value: c.id }, c.name))
+              ),
+              h("input", { placeholder: "품목명", value: newItemName, onChange: (e) => setNewItemName(e.target.value), style: { width: "100%", padding: 10, borderRadius: 8, border: "1px solid #ddd", fontFamily: font, fontSize: 14, outline: "none", marginBottom: 8 } }),
+              h("div", { style: { fontSize: 12, color: "#888", fontWeight: 600, marginBottom: 6 } }, "단위 선택"),
+              h("div", { style: { display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 } },
+                ...UNIT_PRESETS.map((u) => h("button", { key: u, onClick: () => setNewItemUnit(u), style: { padding: "6px 12px", borderRadius: 20, border: `1.5px solid ${newItemUnit === u ? "#1C1C1E" : "#ddd"}`, background: newItemUnit === u ? "#1C1C1E" : "#fff", color: newItemUnit === u ? "#A8E063" : "#555", fontSize: 13, cursor: "pointer" } }, u))
+              ),
+              h("div", { style: { background: "#F0FFF0", borderRadius: 10, padding: "10px 12px", marginBottom: 12 } },
+                h("div", { style: { fontSize: 12, color: "#555", fontWeight: 600, marginBottom: 6 } }, "단위당 가격 (선택)"),
+                h("div", { style: { display: "flex", alignItems: "center", gap: 8 } },
+                  h("input", { type: "number", placeholder: "예: 3000", value: newItemPrice, onChange: (e) => setNewItemPrice(e.target.value), style: { flex: 1, padding: "9px 10px", borderRadius: 8, border: "1px solid #b6e2b6", fontFamily: font, fontSize: 15, outline: "none", fontWeight: 700 } }),
+                  h("span", { style: { fontSize: 13, color: "#555" } }, `원 / ${newItemUnit}`)
+                )
+              ),
+              h("div", { style: { display: "flex", gap: 8 } },
+                h("button", { onClick: () => { setShowAddItem(false); setNewItemName(""); setNewItemPrice(""); }, style: { ...ghostBtn, flex: 1 } }, "취소"),
+                h("button", { onClick: addItem, style: { ...darkBtn, flex: 2 } }, "추가하기")
+              )
+            ),
+            showAddCat && h("div", { style: { background: "#fff", border: "1px solid #E8E8E4", borderRadius: 14, padding: 16 } },
+              h("div", { style: { fontWeight: 700, marginBottom: 12 } }, "새 카테고리 추가"),
+              h("input", { placeholder: "예: 🧴 위생용품", value: newCatName, onChange: (e) => setNewCatName(e.target.value), style: { width: "100%", padding: 10, borderRadius: 8, border: "1px solid #ddd", fontFamily: font, fontSize: 14, outline: "none", marginBottom: 8 } }),
+              h("div", { style: { display: "flex", gap: 8 } },
+                h("button", { onClick: () => setShowAddCat(false), style: { ...ghostBtn, flex: 1 } }, "취소"),
+                h("button", { onClick: addCategory, style: { ...darkBtn, flex: 2 } }, "추가하기")
+              )
+            )
+          )
+        ),
+
+        // 장보기
+        view === "list" && h("div", { style: { padding: "16px 16px 140px" } },
+          shoppingList.length === 0
+            ? h("div", { style: { textAlign: "center", padding: "60px 20px", color: "#aaa" } },
+                h("div", { style: { fontSize: 52, marginBottom: 12 } }, "🛒"),
+                h("div", { style: { fontSize: 15 } }, "재고 확인 탭에서 필요한 수량을 입력해주세요")
+              )
+            : h("div", null,
+                h("div", { style: { marginBottom: 16 } },
+                  h("div", { style: { background: "#E8E8E4", borderRadius: 99, height: 6, overflow: "hidden" } },
+                    h("div", { style: { height: "100%", width: `${(doneItems / totalItems) * 100}%`, background: "#A8E063", borderRadius: 99, transition: "width 0.4s" } })
+                  ),
+                  h("div", { style: { fontSize: 12, color: "#888", marginTop: 6, textAlign: "right" } }, doneItems === totalItems ? "🎉 다 샀어요!" : `${totalItems - doneItems}개 남음`)
+                ),
+                hasPrices && h("div", { style: { background: "#1C1C1E", borderRadius: 16, padding: "16px 18px", marginBottom: 16 } },
+                  h("div", { style: { fontSize: 11, color: "#666", marginBottom: 4 } }, "예상 총 금액"),
+                  h("div", { style: { fontSize: 28, fontWeight: 700, color: "#A8E063" } }, fmt(totalCost)),
+                  doneItems > 0 && h("div", { style: { fontSize: 13, color: "#888", marginTop: 6 } },
+                    "완료 ", h("span", { style: { color: "#A8E063", fontWeight: 600 } }, fmt(doneCost)),
+                    h("span", { style: { margin: "0 6px", color: "#444" } }, "|"),
+                    "남음 ", h("span", { style: { color: "#fff", fontWeight: 600 } }, fmt(totalCost - doneCost))
+                  ),
+                  shoppingList.some((i) => !i.price) && h("div", { style: { fontSize: 11, color: "#444", marginTop: 6 } }, "* 단가 미설정 품목 제외")
+                ),
+                ...shoppingList.map((item) => {
+                  const done = !!quantities[`done_${item.id}`];
+                  const itemTotal = item.price > 0 ? item.price * item.qty : null;
+                  return h("div", { key: item.id, onClick: () => toggleDone(item.id), style: { background: done ? "#F5F5F2" : "#fff", border: `1px solid ${done ? "#E0E0DC" : "#E8E8E4"}`, borderRadius: 14, padding: "14px 16px", marginBottom: 8, display: "flex", alignItems: "center", gap: 14, cursor: "pointer" } },
+                    h("div", { style: { width: 26, height: 26, borderRadius: 8, background: done ? "#A8E063" : "#fff", border: `2px solid ${done ? "#A8E063" : "#ddd"}`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontSize: 14 } }, done ? "✓" : ""),
+                    h("div", { style: { flex: 1 } },
+                      h("div", { style: { fontWeight: 600, fontSize: 15, textDecoration: done ? "line-through" : "none", color: done ? "#bbb" : "#1a1a1a" } }, item.name),
+                      h("div", { style: { fontSize: 12, color: "#ccc", marginTop: 2 } }, item.catName)
+                    ),
+                    h("div", { style: { textAlign: "right" } },
+                      h("div", { style: { fontWeight: 700, fontSize: 18, color: done ? "#ccc" : "#1C1C1E" } }, item.qty, h("span", { style: { fontSize: 13, fontWeight: 400, marginLeft: 2 } }, item.unit)),
+                      itemTotal !== null && h("div", { style: { fontSize: 13, fontWeight: 600, color: done ? "#ccc" : "#2a7a2a", marginTop: 2 } }, fmt(itemTotal))
+                    )
+                  );
+                })
+              )
+        ),
+
+        // Bottom Bar
+        h("div", { style: { position: "fixed", bottom: 0, left: 0, right: 0, background: "#fff", borderTop: "1px solid #E8E8E4", padding: "12px 16px" } },
+          view === "check" && totalItems > 0 && hasPrices && h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 } },
+            h("span", { style: { fontSize: 13, color: "#888" } }, "예상 금액"),
+            h("span", { style: { fontSize: 16, fontWeight: 700, color: "#2a7a2a" } }, fmt(totalCost))
+          ),
+          h("div", { style: { display: "flex", gap: 10 } },
+            h("button", { onClick: resetAll, style: { ...ghostBtn, flex: 1 } }, "초기화"),
+            h("button", { onClick: () => setView("list"), style: { ...darkBtn, flex: 2, background: totalItems > 0 ? "#1C1C1E" : "#E8E8E4", color: totalItems > 0 ? "#A8E063" : "#aaa" } },
+              totalItems > 0 ? `장보기 시작 (${totalItems}개)` : "수량을 선택하세요"
+            )
+          )
+        )
+      );
+    }
+
+    createRoot(document.getElementById("root")).render(h(App));
+  </script>
+</body>
+</html>
